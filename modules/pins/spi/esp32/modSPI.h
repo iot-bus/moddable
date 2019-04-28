@@ -64,4 +64,9 @@ extern void modSPIFlush(void);
 extern void modSPIActivateConfiguration(modSPIConfiguration config);
 #define modSPISetSync(config, _sync) (config)->sync = (_sync)
 
+void modSPITransfer(uint8_t * data, uint32_t size);
+void modSPITransferBytes(uint8_t * data, uint8_t * out, uint32_t size);
+void modSPIWriteBytes(uint8_t * data, uint32_t size);
+void modSPISetFrequency(uint32_t freq);
+
 #endif

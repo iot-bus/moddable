@@ -29,6 +29,9 @@
 #include "esp_attr.h"		// IRAM_ATTR
 #include "esp_heap_caps.h"	// MALLOC_CAP_DMA, heap_caps_malloc
 
+// added for hal-spi
+#include "esp32-hal-spi.h"
+
 #ifndef MODDEF_SPI_MISO_PIN
 	#define MODDEF_SPI_MISO_PIN	12
 #endif
@@ -58,6 +61,14 @@ static spi_transaction_t gTransaction[2];
 static uint8_t gTransactionIndex = 0;
 static uint8_t gTransactionsPending = 0;
 
+// adds for hal-spi
+spi_t * _spi;
+int8_t _spi_number = VSPI;
+uint32_t _div;
+uint32_t _freq;
+bool _inTransaction;
+// end of adds
+
 // SPI_BUFFER_SIZE can be larger than 64... tested up to 512.
 #define SPI_BUFFER_SIZE (512)
 
@@ -67,106 +78,160 @@ static uint8_t gTransactionsPending = 0;
 uint32_t *gSPITransactionBuffer = NULL;
 
 
-void IRAM_ATTR reduceTransactionsPending(uint8_t min)
-{
-	while (gTransactionsPending > min) {
-		spi_transaction_t *ret_trans;
+// void IRAM_ATTR reduceTransactionsPending(uint8_t min)
+// {
+// 	while (gTransactionsPending > min) {
+// 		spi_transaction_t *ret_trans;
 
-		spi_device_get_trans_result(gConfig->spi_dev, &ret_trans, portMAX_DELAY);
+// 		spi_device_get_trans_result(gConfig->spi_dev, &ret_trans, portMAX_DELAY);
 
-		gTransactionsPending -= 1;
-	}
-}
+// 		gTransactionsPending -= 1;
+// 	}
+// }
+
+
+// IAN - TODO this needs the most work
 
 // queue up the next one
-static void IRAM_ATTR postTransfer(spi_transaction_t *transIn)
-{
-    esp_err_t ret;
-	spi_transaction_t *trans;
-	uint16_t loaded, bitsOut;
+// static void IRAM_ATTR postTransfer(spi_transaction_t *transIn)
+// {
+//     esp_err_t ret;
+// 	spi_transaction_t *trans;
+// 	uint16_t loaded, bitsOut;
 
-	if (gSPIDataCount <= 0) {
-		gSPIDataCount = -1;
-		gSPIData = NULL;
-		return;
-	}
+// 	if (gSPIDataCount <= 0) {
+// 		gSPIDataCount = -1;
+// 		gSPIData = NULL;
+// 		return;
+// 	}
 
-	loaded = (gSPIBufferLoader)(gSPIData, (gSPIDataCount <= SPI_BUFFER_SIZE) ? gSPIDataCount : SPI_BUFFER_SIZE, &bitsOut);
-	gSPIDataCount -= loaded;
-	gSPIData += loaded;
+// 	loaded = (gSPIBufferLoader)(gSPIData, (gSPIDataCount <= SPI_BUFFER_SIZE) ? gSPIDataCount : SPI_BUFFER_SIZE, &bitsOut);
+// 	gSPIDataCount -= loaded;
+// 	gSPIData += loaded;
 
-	trans = &gTransaction[gTransactionIndex];
-	gTransactionIndex ^= 1;
+// 	trans = &gTransaction[gTransactionIndex];
+// 	gTransactionIndex ^= 1;
 
-	trans->flags = 0;
-	trans->cmd = 0;
-	trans->addr = 0;
-	trans->length = bitsOut;
-	trans->rxlength = 0;
-	trans->user = 0;
-	trans->tx_buffer = gSPITransactionBuffer;
-	trans->rx_buffer = NULL;
+// 	trans->flags = 0;
+// 	trans->cmd = 0;
+// 	trans->addr = 0;
+// 	trans->length = bitsOut;
+// 	trans->rxlength = 0;
+// 	trans->user = 0;
+// 	trans->tx_buffer = gSPITransactionBuffer;
+// 	trans->rx_buffer = NULL;
 
-	gTransactionsPending += 1;
+// 	gTransactionsPending += 1;
 
-    ret = spi_device_queue_trans(gConfig->spi_dev, trans, portMAX_DELAY);
+//     ret = spi_device_queue_trans(gConfig->spi_dev, trans, portMAX_DELAY);
 
-	reduceTransactionsPending(2);
-}
+// 	reduceTransactionsPending(2);
+// }
 
 static uint8_t gSPIInited;
 
+// void modSPIInit(modSPIConfiguration config)
+// {
+// 	esp_err_t ret;
+
+// 	if (!gSPIInited) {
+// 		spi_bus_config_t buscfg;
+
+// 		gSPITransactionBuffer = heap_caps_malloc(SPI_BUFFER_SIZE, MALLOC_CAP_DMA);
+
+// 		memset(&buscfg, 0, sizeof(buscfg));
+// 		buscfg.miso_io_num = MODDEF_SPI_MISO_PIN;
+// 		buscfg.mosi_io_num = MODDEF_SPI_MOSI_PIN;
+// 		buscfg.sclk_io_num = MODDEF_SPI_SCK_PIN;
+// 		buscfg.quadwp_io_num = -1;
+// 		buscfg.quadhd_io_num = -1;
+
+// 		ret = spi_bus_initialize(config->spiPort, &buscfg, 1);
+// 		if (ret) return;
+// 		gSPIInited = 1;
+// 		gSPIData = NULL;
+// 		gSPIDataCount = -1;
+// 	}
+
+// 	spi_device_interface_config_t devcfg;
+// 	memset(&devcfg, 0, sizeof(devcfg));
+// 	devcfg.clock_speed_hz = config->hz;
+// 	devcfg.mode = 0;
+// 	devcfg.spics_io_num = config->cs_pin;		// set to -1 if none
+// 	devcfg.queue_size = 3;
+// 	devcfg.pre_cb = NULL;
+// 	devcfg.post_cb = postTransfer;
+
+// 	ret = spi_bus_add_device(config->spiPort, &devcfg, &config->spi_dev);
+// 	if (ret) {
+// 		printf("spi_bus_add_device failed %d\n", ret);
+// 		return;
+// 	}
+// }
+
 void modSPIInit(modSPIConfiguration config)
 {
-	esp_err_t ret;
+	gpio_set_direction(config->cs_pin, GPIO_MODE_OUTPUT);
+    gpio_set_level(config->cs_pin, 1);
 
-	if (!gSPIInited) {
-		spi_bus_config_t buscfg;
+    if(_spi) {
+		printf("In modSPIInit, SPI already started\n");
+        return;
+    }
+	else{
+        printf("In modSPIInit, starting SPI\n");
+    }
 
-		gSPITransactionBuffer = heap_caps_malloc(SPI_BUFFER_SIZE, MALLOC_CAP_DMA);
+    if(!_div) {
+        _div = spiFrequencyToClockDiv(40*1000*1000);
+    }
 
-		memset(&buscfg, 0, sizeof(buscfg));
-		buscfg.miso_io_num = MODDEF_SPI_MISO_PIN;
-		buscfg.mosi_io_num = MODDEF_SPI_MOSI_PIN;
-		buscfg.sclk_io_num = MODDEF_SPI_SCK_PIN;
-		buscfg.quadwp_io_num = -1;
-		buscfg.quadhd_io_num = -1;
+    _spi = spiStartBus(_spi_number, _div, SPI_MODE0, SPI_MSBFIRST);
+    if(!_spi) {
+        return;
+    }
 
-		ret = spi_bus_initialize(config->spiPort, &buscfg, 1);
-		if (ret) return;
-		gSPIInited = 1;
-		gSPIData = NULL;
-		gSPIDataCount = -1;
-	}
+    spiAttachSCK(_spi, MODDEF_SPI_SCK_PIN);
+    spiAttachMISO(_spi, MODDEF_SPI_MISO_PIN);
+    spiAttachMOSI(_spi, MODDEF_SPI_MOSI_PIN);
 
-	spi_device_interface_config_t devcfg;
-	memset(&devcfg, 0, sizeof(devcfg));
-	devcfg.clock_speed_hz = config->hz;
-	devcfg.mode = 0;
-	devcfg.spics_io_num = config->cs_pin;		// set to -1 if none
-	devcfg.queue_size = 3;
-	devcfg.pre_cb = NULL;
-	devcfg.post_cb = postTransfer;
-
-	ret = spi_bus_add_device(config->spiPort, &devcfg, &config->spi_dev);
-	if (ret) {
-		printf("spi_bus_add_device failed %d\n", ret);
-		return;
-	}
+	gSPIInited = 1;
+	gSPIData = NULL;
+	gSPIDataCount = -1;
+	gSPITransactionBuffer = heap_caps_malloc(SPI_BUFFER_SIZE, MALLOC_CAP_DMA);
 }
+
+// void modSPIUninit(modSPIConfiguration config)
+// {
+// 	if (config == gConfig)
+// 		modSPIActivateConfiguration(NULL);
+
+// //@@ should only be done on last SPI client closing
+// 	if (config->spi_dev)
+// 		spi_bus_remove_device(config->spi_dev);
+
+// 	free(gSPITransactionBuffer);
+// 	gSPITransactionBuffer = NULL;
+// 	config->spi_dev = NULL;
+// }
 
 void modSPIUninit(modSPIConfiguration config)
 {
 	if (config == gConfig)
 		modSPIActivateConfiguration(NULL);
 
-//@@ should only be done on last SPI client closing
-	if (config->spi_dev)
-		spi_bus_remove_device(config->spi_dev);
-
 	free(gSPITransactionBuffer);
 	gSPITransactionBuffer = NULL;
-	config->spi_dev = NULL;
+
+    if(!_spi) {
+        return;
+    }
+    spiDetachSCK(_spi, MODDEF_SPI_SCK_PIN);
+    spiDetachMISO(_spi, MODDEF_SPI_MISO_PIN);
+    spiDetachMOSI(_spi, MODDEF_SPI_MOSI_PIN);
+//    setHwCs(false);
+    spiStopBus(_spi);
+    _spi = NULL;
 }
 
 void modSPIActivateConfiguration(modSPIConfiguration config)
@@ -413,32 +478,93 @@ uint16_t IRAM_ATTR modSpiLoadBufferGray16To16BE(uint8_t *data, uint16_t bytes, u
 }
 
 // N.B. callers assume this funtion is synchronous
+// void modSPITxRx(modSPIConfiguration config, uint8_t *data, uint16_t count)
+// {
+// 	esp_err_t ret;
+// 	spi_transaction_t t;
+
+// 	modSPIActivateConfiguration(config);
+
+// 	memset(&t, 0, sizeof(t));
+// 	t.length = 8 * count;
+// 	t.tx_buffer = data;
+
+// 	t.rxlength = t.length;
+// 	t.rx_buffer = data;
+// 	ret = spi_device_transmit(config->spi_dev, &t);
+
+// 	if (0 > ret)
+// 		printf("problems sending spi message: ret: %d\n", ret);
+// }
+
+// N.B. callers assume this function is synchronous
 void modSPITxRx(modSPIConfiguration config, uint8_t *data, uint16_t count)
 {
-	esp_err_t ret;
-	spi_transaction_t t;
+	//esp_err_t ret;
+	//spi_transaction_t t;
 
 	modSPIActivateConfiguration(config);
 
-	memset(&t, 0, sizeof(t));
-	t.length = 8 * count;
-	t.tx_buffer = data;
+    gpio_set_level(config->cs_pin, 0);
+	modSPISetFrequency(config->hz);
+	modSPITransfer(data, count);
+	gpio_set_level(config->cs_pin, 1);
 
-	t.rxlength = t.length;
-	t.rx_buffer = data;
-	ret = spi_device_transmit(config->spi_dev, &t);
+	// memset(&t, 0, sizeof(t));
+	// t.length = 8 * count;
+	// t.tx_buffer = data;
 
-	if (0 > ret)
-		printf("problems sending spi message: ret: %d\n", ret);
+	// t.rxlength = t.length;
+	// t.rx_buffer = data;
+	// ret = spi_device_transmit(config->spi_dev, &t);
+
+	// if (0 > ret)
+	// 	printf("problems sending spi message: ret: %d\n", ret);
 }
+
+// void modSPIFlush(void)
+// {
+// 	while (gSPIDataCount >= 0)
+// 		;
+
+// 	reduceTransactionsPending(0);
+// }
 
 void modSPIFlush(void)
 {
-	while (gSPIDataCount >= 0)
-		;
+	// while (gSPIDataCount >= 0)
+	// 	;
 
-	reduceTransactionsPending(0);
+	// reduceTransactionsPending(0);
 }
+
+// static void modSPITxCommon(modSPIConfiguration config, uint8_t *data, uint16_t count, modSPIBufferLoader loader)
+// {
+// 	modSPIActivateConfiguration(config);
+
+// 	gSPIBufferLoader = loader;
+// 	gSPIData = data;
+// 	gSPIDataCount = count;
+
+// 	postTransfer(NULL);
+
+// 	if (config->sync)
+// 		modSPIFlush();
+// }
+
+// static void modSPITxCommon(modSPIConfiguration config, uint8_t *data, uint16_t count, modSPIBufferLoader loader)
+// {
+// 	modSPIActivateConfiguration(config);
+
+// 	gSPIBufferLoader = loader;
+// 	gSPIData = data;
+// 	gSPIDataCount = count;
+
+// 	postTransfer(NULL);
+
+// 	if (config->sync)
+// 		modSPIFlush();
+// }
 
 static void modSPITxCommon(modSPIConfiguration config, uint8_t *data, uint16_t count, modSPIBufferLoader loader)
 {
@@ -448,10 +574,22 @@ static void modSPITxCommon(modSPIConfiguration config, uint8_t *data, uint16_t c
 	gSPIData = data;
 	gSPIDataCount = count;
 
-	postTransfer(NULL);
+	uint16_t loaded, bitsOut;
 
-	if (config->sync)
-		modSPIFlush();
+	if (gSPIDataCount <= 0) {
+		gSPIDataCount = -1;
+		gSPIData = NULL;
+		return;
+	}
+    // IAN - oddWires - this needs updating if more data than buffer can hold
+	loaded = (gSPIBufferLoader)(gSPIData, (gSPIDataCount <= SPI_BUFFER_SIZE) ? gSPIDataCount : SPI_BUFFER_SIZE, &bitsOut);
+	gSPIDataCount -= loaded;
+	gSPIData += loaded;
+
+    modSPISetFrequency(config->hz);
+    gpio_set_level(config->cs_pin, 0);
+	modSPIWriteBytes((uint8_t*)gSPITransactionBuffer, bitsOut/8);
+    gpio_set_level(config->cs_pin, 1);
 }
 
 void modSPITx(modSPIConfiguration config, uint8_t *data, uint16_t count)
@@ -491,3 +629,48 @@ void modSPITxCLUT16To16BE(modSPIConfiguration config, uint8_t *data, uint16_t co
 	printf("need to implement CLUT16to16BE\n");
 }
 
+
+// Added for Arduino hal-spi
+
+void modSPITransfer(uint8_t * data, uint32_t size) 
+{ 
+    modSPITransferBytes(data, data, size); 
+}
+
+/**
+ * @param data uint8_t * data buffer. can be NULL for Read Only operation
+ * @param out  uint8_t * output buffer. can be NULL for Write Only operation
+ * @param size uint32_t
+ */
+void modSPITransferBytes(uint8_t * data, uint8_t * out, uint32_t size)
+{
+    if(_inTransaction){
+        return spiTransferBytesNL(_spi, data, out, size);
+    }
+    spiTransferBytes(_spi, data, out, size);
+}
+
+/**
+ * @param data uint8_t *
+ * @param size uint32_t
+ */
+void modSPIWriteBytes(uint8_t * data, uint32_t size)
+{
+    if(_inTransaction){
+        return spiWriteNL(_spi, data, size);
+    }
+    spiSimpleTransaction(_spi);
+    spiWriteNL(_spi, data, size);
+    spiEndTransaction(_spi);
+}
+
+void modSPISetFrequency(uint32_t freq)
+{
+    //check if last freq changed
+    uint32_t cdiv = spiGetClockDiv(_spi);
+    if(_freq != freq || _div != cdiv) {
+        _freq = freq;
+        _div = spiFrequencyToClockDiv(_freq);
+        spiSetClockDiv(_spi, _div);
+    }
+}

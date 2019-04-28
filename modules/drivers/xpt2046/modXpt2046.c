@@ -61,6 +61,10 @@
 #else
 	#define MODDEF_XPT2046_CALIBRATE (true)
 #endif
+#ifndef MODDEF_XPT2046_ZTHRESHOLD
+	#define MODDEF_XPT2046_ZTHRESHOLD (420)
+#endif
+
 
 // bit 7 - start bit
 // bit 6-4 A2-A0 - Channel select bits
@@ -149,15 +153,40 @@ void xs_XPT2046(xsMachine *the)
 
 #define DISTANCE(x1, x2) (((int)x1 - (int)x2) * ((int)x1 - (int)x2))
 
+void trace(xsMachine *the, uint16_t num){
+
+	char buffer[33];
+	int temp = num;
+
+    memset(buffer, 0x00, sizeof(buffer));
+	itoa(temp, buffer, 10);
+	strcat(buffer, "\n");
+	xsTrace(buffer);
+}
+
+int pressed(xsMachine *the, xpt2046 xpt){
+
+	uint8_t data[3] = {CTRLZ1, 0, 0};
+	modSPITxRx(&xpt->spiConfig, (uint8_t *)&data, sizeof(data));
+	uint16_t z1 = (data[1] << 8 | data[2]) >> 3;
+	if (z1 > MODDEF_XPT2046_ZTHRESHOLD){
+		// xsTrace("z: ");
+	    // trace(the, z1);
+		return z1;
+	}
+    return 0;
+}
+
 void xs_XPT2046_read(xsMachine *the)
 {
 	xpt2046 xpt = xsmcGetHostData(xsThis);
 	uint16_t x, y, i;
-
 	xsmcVars(2);
 	xsmcGet(xsVar(1), xsArg(0), 0);
-
-	if (modGPIORead(&xpt->touchPin)) {
+	uint16_t z1 = pressed(the, xpt);
+    
+	// if touchPin valid use that otherwise use z1 to determine whether pressed
+	if ((xpt->touchPin.pin != 255 && modGPIORead(&xpt->touchPin)) || (xpt->touchPin.pin == 255 && !z1)) {
 		if ((1 != xpt->state) && (2 != xpt->state)) {
 			xpt->state = 0;
 			xpt->priorCount = 0;
@@ -165,6 +194,8 @@ void xs_XPT2046_read(xsMachine *the)
 		}
 		xpt->state = 3;
 	}
+
+//	xsTrace("pressed\n");
 
 	if (xpt->priorCount) {
 		if (xpt->priorCount >= 3) {
@@ -197,8 +228,10 @@ void xs_XPT2046_read(xsMachine *the)
 		if ((0 == xpt->state) || (1 == xpt->state))
 			xpt->state += 1;
 	}
-
 	xpt2046GetPosition(xpt, &x, &y);
+	// xsTrace("x: ");trace(the, x);
+	// xsTrace("y: ");trace(the, y);
+
 	if (xpt->priorCount == MODDEF_XPT2046_HISTORYCOUNT) {
 		for (i = 1; i < MODDEF_XPT2046_HISTORYCOUNT; i++) {
 			xpt->priorX[i - 1] = xpt->priorX[i];
@@ -225,26 +258,30 @@ void xpt2046ChipSelect(uint8_t active, modSPIConfiguration config)
 
 void xpt2046GetPosition(xpt2046 xpt, uint16_t *x, uint16_t *y)
 {
-	int16_t sample;
+	uint8_t data[3];
 	int32_t zero = 0;
 
 	powerDown(xpt);
+    
+	memset(data, 0x00, sizeof(data));
+	data[0] = CTRLX;
+	modSPITxRx(&xpt->spiConfig, (uint8_t *)&data, sizeof(data));
 
-	sample = CTRLX;
-	modSPITxRx(&xpt->spiConfig, (uint8_t *)&sample, sizeof(sample));
-
-	sample = CTRLY;
-	modSPITxRx(&xpt->spiConfig, (uint8_t *)&sample, sizeof(sample));
+	memset(data, 0x00, sizeof(data));
+	data[0] = CTRLY;
+	modSPITxRx(&xpt->spiConfig, (uint8_t *)&data, sizeof(data));
 
 	powerDown(xpt);
 
-	sample = CTRLX;
-	modSPITxRx(&xpt->spiConfig, (uint8_t *)&sample, sizeof(sample));
-	*x = sample >> 4;
+	memset(data, 0x00, sizeof(data));
+	data[0] = CTRLX;
+	modSPITxRx(&xpt->spiConfig, (uint8_t *)&data, sizeof(data));
+	*x = (data[1] << 8 | data[2]) >> 3;
 
-	sample = CTRLY;
-	modSPITxRx(&xpt->spiConfig, (uint8_t *)&sample, sizeof(sample));
-	*y = sample >> 4;
+	memset(data, 0x00, sizeof(data));
+	data[0] = CTRLY;
+	modSPITxRx(&xpt->spiConfig, (uint8_t *)&data, sizeof(data));
+	*y = (data[1] << 8 | data[2]) >> 3;
 
 #if MODDEF_XPT2046_CALIBRATE
 	*x = (*x - xpt->min_x) * ((float)MODDEF_XPT2046_WIDTH) / (xpt->max_x - xpt->min_x);
@@ -256,7 +293,7 @@ void xpt2046GetPosition(xpt2046 xpt, uint16_t *x, uint16_t *y)
 	if (*y > (MODDEF_XPT2046_HEIGHT - 1)) *y = MODDEF_XPT2046_HEIGHT - 1;
 #endif
 
-	modSPITxRx(&xpt->spiConfig, (uint8_t *)&zero, sizeof(zero));
+	//modSPITxRx(&xpt->spiConfig, (uint8_t *)&zero, sizeof(zero));
 
 	powerDown(xpt);		// reset to get interrupt pin working again
 }
