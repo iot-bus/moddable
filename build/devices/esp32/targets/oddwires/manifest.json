@@ -30,7 +30,7 @@
 			"raw_right": 3600,
 			"raw_top": 250,
 			"raw_bottom": 3600,
-			"zthreshold": 400
+			"zthreshold": 100
 		}
 	}
 }
