@@ -70,7 +70,7 @@ bool _inTransaction;
 // end of adds
 
 // SPI_BUFFER_SIZE can be larger than 64... tested up to 512.
-#define SPI_BUFFER_SIZE (512)
+#define SPI_BUFFER_SIZE (1024)
 
 // The SPI driver may decide to use DMA for transfers, so these buffers should
 // be allocated in DMA-capable memory using heap_caps_malloc(size, MALLOC_CAP_DMA).
@@ -581,7 +581,7 @@ static void modSPITxCommon(modSPIConfiguration config, uint8_t *data, uint16_t c
 		gSPIData = NULL;
 		return;
 	}
-    // IAN - oddWires - this needs updating if more data than buffer can hold
+    // IAN - oddWires - this will leave artifacts if is larger than buffer - I just upped size of buffer to 1024 
 	loaded = (gSPIBufferLoader)(gSPIData, (gSPIDataCount <= SPI_BUFFER_SIZE) ? gSPIDataCount : SPI_BUFFER_SIZE, &bitsOut);
 	gSPIDataCount -= loaded;
 	gSPIData += loaded;
